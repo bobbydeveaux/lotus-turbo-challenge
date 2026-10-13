@@ -1,6 +1,6 @@
 # Lotus Esprit Turbo Challenge (remake)
 
-**Play:** [v2 (sprites)](https://bobbydeveaux.github.io/lotus-turbo-challenge/) · [v3 (three.js, full 3D)](https://bobbydeveaux.github.io/lotus-turbo-challenge/v3/)
+**Play:** [v1 (original)](https://bobbydeveaux.github.io/lotus-turbo-challenge/v1/) · [v2 (sprites)](https://bobbydeveaux.github.io/lotus-turbo-challenge/) · [v3 (three.js, full 3D)](https://bobbydeveaux.github.io/lotus-turbo-challenge/v3/)
 
 A pseudo-3D arcade racer in the spirit of the Amiga Lotus games. All car, scenery and
 backdrop graphics are modelled procedurally and rendered in Blender.
@@ -48,7 +48,7 @@ backdrops. Seamlessness comes from sampling noise on a cylinder.
 | `js/stages.js` | themes and stage definitions |
 | `js/hud.js`, `js/main.js` | HUD, menus, championship flow, high scores |
 
-The original single-file version is kept in `legacy/`.
+The original single-file version lives in `v1/`.
 
 ## v3 — full 3D (three.js)
 
