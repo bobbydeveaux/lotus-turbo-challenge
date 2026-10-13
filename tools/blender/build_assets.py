@@ -395,6 +395,7 @@ def mat_noise(name, c1, c2, scale=4.0, rough=0.8, detail=4.0, coord="Object", bu
         bp.inputs["Strength"].default_value = bump
         link_out(nt, nz, "Fac", bp, "Height")
         link_out(nt, bp, "Normal", b, "Normal")
+    m["flat"] = [(x + y) / 2 for x, y in zip(c1, c2)]
     return m, nt, ramp, b
 
 
@@ -416,6 +417,7 @@ def mix_color(nt, fac_socket, a_socket, b_color_or_socket):
 
 
 def add_snow_cover(m, nt, ramp, bsdf, lo=0.45, hi=0.7, snow=(0.92, 0.95, 1.0)):
+    m["snow"] = 1
     geo = nt.nodes.new("ShaderNodeNewGeometry")
     sep = nt.nodes.new("ShaderNodeSeparateXYZ")
     mr = nt.nodes.new("ShaderNodeMapRange")
@@ -980,6 +982,7 @@ def gantry(root, label, span=22.0, checker=False):
     b = new_obj("banner", bm, dark, root)
     if checker:
         m = bpy.data.materials.new("chk")
+        m["checker"] = 1
         bsdf = _bsdf(m)
         nt = m.node_tree
         ch = nt.nodes.new("ShaderNodeTexChecker")
@@ -1077,6 +1080,7 @@ def barrier(root):
 
 def window_material(name, cell=(1.6, 2.2), lit=0.45, strength=3.0):
     m = bpy.data.materials.new(name)
+    m["windows"] = 1
     b = _bsdf(m)
     nt = m.node_tree
     geo = nt.nodes.new("ShaderNodeNewGeometry")

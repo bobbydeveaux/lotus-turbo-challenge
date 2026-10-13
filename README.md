@@ -1,5 +1,7 @@
 # Lotus Esprit Turbo Challenge (remake)
 
+**Play:** [v2 (sprites)](https://bobbydeveaux.github.io/lotus-turbo-challenge/) · [v3 (three.js, full 3D)](https://bobbydeveaux.github.io/lotus-turbo-challenge/v3/)
+
 A pseudo-3D arcade racer in the spirit of the Amiga Lotus games. All car, scenery and
 backdrop graphics are modelled procedurally and rendered in Blender.
 
@@ -47,3 +49,18 @@ backdrops. Seamlessness comes from sampling noise on a cylinder.
 | `js/hud.js`, `js/main.js` | HUD, menus, championship flow, high scores |
 
 The original single-file version is kept in `legacy/`.
+
+## v3 — full 3D (three.js)
+
+`v3/` renders the same game in real 3D. Track generation, physics, AI, audio, menus
+and HUD are shared with v2 (`js/`); only the renderer changes.
+
+- Models come from the same Blender builders, exported as glTF:
+  `Blender -b --factory-startup --python tools/blender/export_glb.py` → `v3/assets/models/`
+- `v3/js/toon.js` – MeshToonMaterial with a 3-step ramp, hard specular + rim, snow caps
+- `v3/js/outline.js` – screen-space ink lines from depth + normal edges
+- `v3/js/world.js` – road, kerbs, terrain and instanced scenery built from the track
+- `v3/js/fx.js` – sky, Blender panoramas on a ring, weather, particles, glows
+- `v3/js/renderer3d.js` – cars, chase camera, lighting, shadows, split-screen views
+
+ES modules need a web server locally: `python3 -m http.server` then open `/v3/`.

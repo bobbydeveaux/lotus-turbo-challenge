@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lotus Turbo Challenge 3D</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&family=Lilita+One&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; }
+  canvas { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); display: block; }
+  #gl { background: #000; }
+  #game { background: transparent; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<canvas id="game"></canvas>
+<!-- shared with v2: track generator, physics + AI, audio, input, UI kit, HUD -->
+<script src="../js/gfx-manifest.js"></script>
+<script src="../js/util.js"></script>
+<script src="../js/assets.js"></script>
+<script src="../js/stages.js"></script>
+<script src="../js/track.js"></script>
+<script src="../js/audio.js"></script>
+<script src="../js/input.js"></script>
+<script src="../js/race.js"></script>
+<script src="../js/ui.js"></script>
+<script src="../js/hud.js"></script>
+<script type="module" src="js/boot.js"></script>
+</body>
+</html>

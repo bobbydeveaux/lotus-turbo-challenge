@@ -3,7 +3,7 @@
 const W = 1280, H = 720;
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
-const renderer = new Renderer(ctx);
+const renderer = new (window.RendererImpl || Renderer)(ctx);
 const C = UI.C;
 
 function resize() {
@@ -389,6 +389,7 @@ const Game = {
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     this.hits = [];
+    if (renderer.beginFrame) renderer.beginFrame();
     switch (this.mode) {
       case 'loading': this.drawLoading(); break;
       case 'title': this.drawBg(0.35); this.drawTitle(); break;
@@ -421,7 +422,7 @@ const Game = {
     const race = this.race;
     const views = this.views();
     const split = views.length > 1;
-    if (split) { ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H); }
+    if (split && !renderer.is3D) { ctx.fillStyle = C.ink; ctx.fillRect(0, 0, W, H); }
     race.players.forEach((pl, i) => {
       renderer.drawView(views[i], race, pl);
       if (this.mode !== 'intro' && !this.demo) drawHUD(ctx, views[i], race, pl, split);
@@ -807,7 +808,7 @@ const fontsReady = document.fonts
   ? Promise.race([Promise.all([document.fonts.load('40px "Lilita One"'), document.fonts.load('600 20px "Fredoka"')]), new Promise((r) => setTimeout(r, 2500))])
   : Promise.resolve();
 
-Promise.all([GFX.load(), fontsReady]).then(() => {
+Promise.all([GFX.load(), fontsReady, renderer.ready]).then(() => {
   Game.go('title');
   const q = new URLSearchParams(location.search);
   Game.autopilot = q.has('autopilot');
