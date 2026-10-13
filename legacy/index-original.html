@@ -1,0 +1,629 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Lotus Turbo Challenge II</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#000; display:flex; justify-content:center; align-items:center; height:100vh; }
+canvas { display:block; }
+#ui {
+  position:absolute; top:0; left:0; width:100%; height:100%;
+  display:flex; flex-direction:column; justify-content:center; align-items:center;
+  background:rgba(0,0,0,0.92); color:#fff; font-family:monospace;
+}
+#ui h1 { font-size:2.2em; color:#ff4400; letter-spacing:5px; text-shadow:0 0 20px #ff4400; }
+#ui h2 { font-size:1.1em; color:#ffdd00; margin:6px 0 20px; letter-spacing:3px; }
+#ui p  { font-size:0.82em; color:#aaa; margin:3px 0; }
+#ui button {
+  margin-top:22px; padding:11px 38px; background:#cc3300; color:#fff;
+  border:2px solid #ff6600; font:bold 1em monospace; cursor:pointer; letter-spacing:3px;
+}
+#ui button:hover { background:#ff4400; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <h1>LOTUS ESPRIT</h1>
+  <h2>TURBO CHALLENGE II</h2>
+  <p>&#8592; &#8594; &nbsp;or&nbsp; A D &mdash; Steer</p>
+  <p>&#8593; &nbsp;or&nbsp; W &mdash; Accelerate &nbsp;&nbsp; &#8595; &nbsp;or&nbsp; S &mdash; Brake</p>
+  <p>SHIFT &mdash; Gear Up &nbsp; CTRL &mdash; Gear Down &nbsp; ESC &mdash; Pause</p>
+  <button id="go">START RACE</button>
+</div>
+
+<script>
+// ── Canvas ────────────────────────────────────────────────────────────────────
+const W = 640, H = 400;
+const HUD_H = 44;
+const HZ = 158;                   // horizon Y
+const RB = H - HUD_H;            // road bottom Y  (= 356)
+const ROAD_SPAN = RB - HZ;       // = 198 pixels of road
+
+const cv  = document.getElementById('c');
+const ctx = cv.getContext('2d');
+cv.width = W; cv.height = H;
+
+function resize() {
+  const s = Math.min(window.innerWidth / W, window.innerHeight / H);
+  cv.style.width  = Math.round(W * s) + 'px';
+  cv.style.height = Math.round(H * s) + 'px';
+}
+resize();
+window.addEventListener('resize', resize);
+
+// ── Track constants ───────────────────────────────────────────────────────────
+const ROAD_HW   = 235;   // road half-width in pixels at screen bottom
+const DRAW_SEGS = 70;    // max visible segments
+const TOTAL_SEGS= 480;   // track length in segments
+const CURVE_SCALE = 52;  // pixels per accumulated curve unit at horizon
+const MAX_SPEED = 320;   // arbitrary speed units
+const SEG_SPEED = 22;    // segments/sec at max speed
+
+// ── Build track ───────────────────────────────────────────────────────────────
+const segs = [];
+
+function mkSeg(curve) {
+  segs.push({ curve, alt: Math.floor(segs.length / 3) % 2, trees: [] });
+}
+
+function addSegs(n, c) { for (let i = 0; i < n; i++) mkSeg(c); }
+
+function buildTrack() {
+  segs.length = 0;
+  addSegs(30,  0);
+  addSegs(22,  0.022); addSegs(18, -0.018);
+  addSegs(15,  0);
+  addSegs(20,  0.038); addSegs(12, -0.012);
+  addSegs(15,  0);
+  addSegs(18, -0.038); addSegs(18,  0.038);
+  addSegs(20,  0.025); addSegs(20, -0.025);
+  addSegs(12,  0);
+  addSegs(22,  0.045); addSegs(18, -0.045);
+  addSegs(30,  0);
+  addSegs(20, -0.03);  addSegs(20,  0.03);
+  addSegs(25,  0);
+
+  while (segs.length < TOTAL_SEGS) {
+    const ref = segs[segs.length % (segs.length || 1)];
+    mkSeg(ref ? ref.curve * 0.4 : 0);
+  }
+
+  // Scatter trees: one per 4 segments, random side
+  for (let i = 4; i < TOTAL_SEGS; i += 4) {
+    segs[i].trees.push({ side: Math.random() > 0.5 ? 1 : -1 });
+    if (Math.random() > 0.55) // double up sometimes
+      segs[i].trees.push({ side: Math.random() > 0.5 ? 1 : -1 });
+  }
+}
+
+function segAt(n) {
+  return segs[((n % TOTAL_SEGS) + TOTAL_SEGS) % TOTAL_SEGS];
+}
+
+// ── Traffic ───────────────────────────────────────────────────────────────────
+const CAR_COLS = ['#bb1111','#1133bb','#bbaa00','#118833','#cccccc','#bb6600'];
+let traffic = [];
+
+function initTraffic() {
+  traffic = [];
+  for (let i = 0; i < 20; i++) {
+    traffic.push({
+      pos:    10 + Math.random() * (TOTAL_SEGS - 20),   // float segment position
+      lane:   (Math.random() - 0.5) * 1.3,              // -0.65..0.65
+      spd:    (0.45 + Math.random() * 0.35) * SEG_SPEED,// segments/sec
+      col:    CAR_COLS[i % CAR_COLS.length],
+    });
+  }
+}
+
+// ── Stars (fixed screen positions) ───────────────────────────────────────────
+const STARS = Array.from({ length: 70 }, (_, i) => ({
+  x: (i * 9337 + i * i * 73) % W,
+  y: (i * 6173 + i * 41) % HZ,
+  r: i % 7 === 0 ? 1.5 : 1,
+}));
+
+// ── State ─────────────────────────────────────────────────────────────────────
+const GEAR_TOPS = [0, 0.19, 0.36, 0.55, 0.74, 0.9, 1.0];
+let state, keys, paused, running, lastT;
+
+function initState() {
+  state = {
+    pos:     0,          // float segment units
+    speed:   0,
+    gear:    1,
+    px:      0,          // player x: -1=left edge, 0=center, 1=right edge
+    fuel:    100,
+    lapMs:   0,
+    bestMs:  Infinity,
+    lap:     1,
+  };
+  keys   = {};
+  paused = false;
+}
+
+// ── Input ─────────────────────────────────────────────────────────────────────
+window.addEventListener('keydown', e => {
+  if (!running) return;
+  keys[e.code] = true;
+  if (e.code === 'Escape') { paused = !paused; return; }
+  if ((e.code === 'ShiftLeft' || e.code === 'ShiftRight') && state.gear < 6) state.gear++;
+  if ((e.code === 'ControlLeft' || e.code === 'ControlRight') && state.gear > 1) {
+    state.gear--; e.preventDefault();
+  }
+});
+window.addEventListener('keyup', e => { delete keys[e.code]; });
+
+// ── Physics ───────────────────────────────────────────────────────────────────
+function update(dt) {
+  if (paused) return;
+  const acc   = keys['ArrowUp']    || keys['KeyW'];
+  const brk   = keys['ArrowDown']  || keys['KeyS'];
+  const left  = keys['ArrowLeft']  || keys['KeyA'];
+  const right = keys['ArrowRight'] || keys['KeyD'];
+
+  const topSpd = GEAR_TOPS[state.gear] * MAX_SPEED;
+  if (acc && state.fuel > 0) {
+    state.speed = Math.min(topSpd, state.speed + 380 * dt);
+  } else if (brk) {
+    state.speed = Math.max(0, state.speed - 520 * dt);
+  } else {
+    state.speed = Math.max(0, state.speed - 65 * dt);
+  }
+
+  const offroad = Math.abs(state.px) > 1;
+  if (offroad) state.speed *= Math.pow(0.96, dt * 60);
+
+  // Steering
+  const str = 0.017 * (1 - state.speed / MAX_SPEED * 0.35);
+  if (left)  state.px -= str * (1 + state.speed / MAX_SPEED * 0.6);
+  if (right) state.px += str * (1 + state.speed / MAX_SPEED * 0.6);
+  state.px = Math.max(-2.5, Math.min(2.5, state.px));
+
+  // Centrifugal push on curves
+  const curSeg = segAt(Math.floor(state.pos));
+  state.px += curSeg.curve * state.speed / MAX_SPEED * 0.055 * dt * 60;
+
+  // Move
+  state.pos += state.speed / MAX_SPEED * SEG_SPEED * dt;
+  if (state.pos >= TOTAL_SEGS) {
+    state.pos -= TOTAL_SEGS;
+    state.lap++;
+    if (state.lapMs < state.bestMs) state.bestMs = state.lapMs;
+    state.lapMs = 0;
+  }
+
+  state.fuel = Math.max(0, state.fuel - (acc ? 1.4 : 0.28) * dt);
+  state.lapMs += dt * 1000;
+
+  // Move traffic
+  for (const car of traffic) {
+    car.pos += car.spd * dt;
+    if (car.pos >= TOTAL_SEGS) car.pos -= TOTAL_SEGS;
+  }
+}
+
+// ── Road rendering (scanline) ─────────────────────────────────────────────────
+// Per-scanline cache (filled each frame, used for sprite placement)
+const lineCX = new Float32Array(H);  // road center X at each y
+const lineHW = new Float32Array(H);  // road half-width at each y
+
+function renderRoad() {
+  const pSeg = Math.floor(state.pos) % TOTAL_SEGS;
+
+  // Cumulative curve offsets: cumC[sa] = sum of curve[0..sa-1] from pSeg
+  const cumC = new Float32Array(DRAW_SEGS + 1);
+  for (let i = 1; i <= DRAW_SEGS; i++) {
+    cumC[i] = cumC[i - 1] + segAt(pSeg + i).curve;
+  }
+
+  // Draw sky
+  const skyGrad = ctx.createLinearGradient(0, 0, 0, HZ);
+  skyGrad.addColorStop(0,   '#000008');
+  skyGrad.addColorStop(0.65,'#030320');
+  skyGrad.addColorStop(1,   '#080845');
+  ctx.fillStyle = skyGrad;
+  ctx.fillRect(0, 0, W, HZ);
+
+  // Stars
+  ctx.fillStyle = '#ffffff';
+  for (const s of STARS) ctx.fillRect(s.x, s.y, s.r, s.r);
+
+  // City silhouette (scrolls slightly with playerX)
+  const scrollX = -state.px * 14;
+  ctx.fillStyle = '#06061a';
+  const bldgs = [
+    [0,28,38],[50,18,26],[88,35,22],[118,15,30],[155,42,18],[180,25,24],
+    [210,30,20],[238,20,35],[280,38,16],[302,22,28],[335,45,20],[362,18,24],
+    [390,28,32],[430,22,20],[458,36,26],[490,18,30],[525,40,22],[554,25,28],
+    [588,32,24],[618,20,36],
+  ];
+  for (const [bx, bh, bw] of bldgs) {
+    const x = (bx + scrollX + W * 2) % (W + 80) - 40;
+    ctx.fillRect(x, HZ - bh, bw, bh);
+    // lit windows
+    ctx.fillStyle = 'rgba(255,240,120,0.18)';
+    for (let wy = 2; wy < bh - 3; wy += 5)
+      for (let wx = 2; wx < bw - 2; wx += 5)
+        if ((bx + wy + wx) % 3 !== 0)
+          ctx.fillRect(x + wx, HZ - bh + wy, 2, 3);
+    ctx.fillStyle = '#06061a';
+  }
+
+  // ── Scanlines ──────────────────────────────────────────────────────────────
+  for (let y = RB; y > HZ; y--) {
+    const t  = (y - HZ) / ROAD_SPAN;          // 1=near  0=far
+    const z  = 1.0 / Math.max(t, 0.003);       // depth (1=near, big=far)
+    const sa = Math.min(Math.floor(z - 1), DRAW_SEGS - 1);
+
+    const hw  = ROAD_HW * t;
+    const rcx = W / 2 - state.px * ROAD_HW * t + cumC[sa] * CURVE_SCALE;
+
+    lineCX[y] = rcx;
+    lineHW[y] = hw;
+
+    // World position for alternating stripes
+    const worldPos = state.pos + sa;
+    const stripe   = Math.floor(worldPos / 3) % 2;
+
+    // Grass
+    ctx.fillStyle = stripe ? '#0c2a0c' : '#091f09';
+    ctx.fillRect(0, y, W, 1);
+
+    // Road surface
+    ctx.fillStyle = stripe ? '#4a4a4a' : '#383838';
+    ctx.fillRect(rcx - hw, y, hw * 2, 1);
+
+    // Rumble strips
+    ctx.fillStyle = stripe ? '#ffffff' : '#cc0000';
+    ctx.fillRect(rcx - hw,          y, hw * 0.13, 1);
+    ctx.fillRect(rcx + hw * 0.87,   y, hw * 0.13, 1);
+
+    // Centre dashes (white, every 6 stripes, 3 on 3 off)
+    if (Math.floor(worldPos / 3) % 6 < 3) {
+      ctx.fillStyle = 'rgba(255,255,255,0.35)';
+      ctx.fillRect(rcx - 2, y, 4, 1);
+    }
+  }
+}
+
+// ── Sprite helpers ────────────────────────────────────────────────────────────
+function drawTree(x, y, sc) {
+  const tw = 38 * sc, th = 68 * sc;
+  if (th < 3) return;
+  ctx.fillStyle = '#2a1508';
+  ctx.fillRect(x - tw * 0.08, y - th * 0.32, tw * 0.16, th * 0.32);
+  ctx.fillStyle = '#071407';
+  ctx.beginPath();
+  ctx.ellipse(x, y - th * 0.62, tw * 0.52, th * 0.52, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = 'rgba(20,50,10,0.6)';
+  ctx.beginPath();
+  ctx.ellipse(x - tw * 0.08, y - th * 0.72, tw * 0.22, th * 0.22, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+function darken(hex, f) {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgb(${Math.round(r*f)},${Math.round(g*f)},${Math.round(b*f)})`;
+}
+
+function drawTrafficCar(x, y, sc, col) {
+  const cw = 88 * sc, ch = 44 * sc;
+  if (cw < 3) return;
+  ctx.fillStyle = col;
+  ctx.fillRect(x - cw / 2, y - ch, cw, ch);
+  ctx.fillStyle = darken(col, 0.55);
+  ctx.fillRect(x - cw * 0.28, y - ch * 1.48, cw * 0.56, ch * 0.52);
+  ctx.fillStyle = '#1a2a38';
+  ctx.fillRect(x - cw * 0.22, y - ch * 1.42, cw * 0.44, ch * 0.4);
+  // tail lights
+  ctx.fillStyle = '#ff2200';
+  ctx.fillRect(x - cw * 0.48, y - ch * 0.32, cw * 0.13, ch * 0.26);
+  ctx.fillRect(x + cw * 0.35, y - ch * 0.32, cw * 0.13, ch * 0.26);
+  // wheels
+  ctx.fillStyle = '#111';
+  ctx.fillRect(x - cw * 0.5,  y - ch * 0.22, cw * 0.16, ch * 0.22);
+  ctx.fillRect(x + cw * 0.34, y - ch * 0.22, cw * 0.16, ch * 0.22);
+}
+
+function drawPlayerCar() {
+  const steerVis = ((keys['ArrowLeft'] || keys['KeyA']) ? -1 :
+                    (keys['ArrowRight']|| keys['KeyD']) ?  1 : 0) * 10;
+  const cx2 = W / 2 + steerVis;
+  const y   = RB;
+  const w = 112, h = 56;
+
+  // Shadow
+  ctx.fillStyle = 'rgba(0,0,0,0.45)';
+  ctx.fillRect(cx2 - w/2 + 10, y - 5, w - 20, 9);
+
+  // Body
+  ctx.fillStyle = '#cc1111';
+  ctx.fillRect(cx2 - w/2, y - h, w, h);
+  // Side stripe
+  ctx.fillStyle = '#991111';
+  ctx.fillRect(cx2 - w/2, y - h*0.44, w, h * 0.13);
+  // Rear wing
+  ctx.fillStyle = '#111';
+  ctx.fillRect(cx2 - w*0.5,  y - h*0.88, w, h * 0.07);
+  // Diffuser / lower
+  ctx.fillStyle = '#222';
+  ctx.fillRect(cx2 - w*0.38, y - h*0.28, w*0.76, h*0.2);
+  // Roof
+  ctx.fillStyle = '#880000';
+  ctx.fillRect(cx2 - w*0.3, y - h*1.45, w*0.6, h*0.5);
+  // Rear screen
+  ctx.fillStyle = '#101c28';
+  ctx.fillRect(cx2 - w*0.24, y - h*1.4, w*0.48, h*0.4);
+  // Tail lights
+  ctx.fillStyle = '#ff3300';
+  ctx.fillRect(cx2 - w*0.48, y - h*0.38, w*0.15, h*0.3);
+  ctx.fillRect(cx2 + w*0.33, y - h*0.38, w*0.15, h*0.3);
+  ctx.fillStyle = '#ff7700';
+  ctx.fillRect(cx2 - w*0.46, y - h*0.35, w*0.1, h*0.22);
+  ctx.fillRect(cx2 + w*0.36, y - h*0.35, w*0.1, h*0.22);
+  // Wheels
+  ctx.fillStyle = '#111';
+  ctx.fillRect(cx2 - w*0.54, y - h*0.62, w*0.19, h*0.62);
+  ctx.fillRect(cx2 + w*0.35, y - h*0.62, w*0.19, h*0.62);
+  ctx.fillStyle = '#333';
+  ctx.fillRect(cx2 - w*0.52, y - h*0.55, w*0.06, h*0.18);
+  ctx.fillRect(cx2 + w*0.46, y - h*0.55, w*0.06, h*0.18);
+  // Plate
+  ctx.fillStyle = '#ffee00';
+  ctx.fillRect(cx2 - 20, y - h*0.1, 40, 9);
+  ctx.fillStyle = '#000';
+  ctx.font = '7px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LTC 2', cx2, y - h*0.03);
+  ctx.textAlign = 'left';
+}
+
+// ── HUD ───────────────────────────────────────────────────────────────────────
+function drawHUD() {
+  ctx.fillStyle = '#000';
+  ctx.fillRect(0, H - HUD_H, W, HUD_H);
+  ctx.fillStyle = '#1a1a1a';
+  ctx.fillRect(0, H - HUD_H, W, 1);
+
+  const mph = Math.round(state.speed / MAX_SPEED * 195);
+
+  ctx.font = 'bold 10px monospace';
+  ctx.fillStyle = '#ffdd00';
+  const labels = [['MPH',8],['GEAR',78],['FUEL',138],['TIME',230],['BEST',308],['LAP',390],['POS',455]];
+  for (const [t, x] of labels) ctx.fillText(t, x, H - 29);
+
+  ctx.font = 'bold 20px monospace';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(String(mph).padStart(3), 5, H - 8);
+  ctx.fillStyle = state.gear >= 5 ? '#ff8800' : '#fff';
+  ctx.fillText(state.gear, 86, H - 8);
+
+  // Fuel bar
+  const fy = H - 23, fw = 70;
+  ctx.strokeStyle = '#444'; ctx.lineWidth = 1;
+  ctx.strokeRect(136, fy, fw, 11);
+  ctx.fillStyle = state.fuel > 30 ? '#00cc44' : state.fuel > 10 ? '#ffaa00' : '#ff2200';
+  ctx.fillRect(137, fy + 1, Math.max(0, (fw - 2) * state.fuel / 100), 9);
+
+  ctx.fillStyle = '#fff';
+  ctx.font = 'bold 17px monospace';
+  ctx.fillText((state.lapMs / 1000).toFixed(2), 228, H - 7);
+  ctx.fillStyle = '#88ff88';
+  ctx.fillText(state.bestMs === Infinity ? '--:--' : (state.bestMs / 1000).toFixed(2), 306, H - 7);
+  ctx.fillStyle = '#fff';
+  ctx.fillText(state.lap, 390, H - 7);
+
+  // Position
+  let pos = 1;
+  const pSeg = state.pos % TOTAL_SEGS;
+  for (const car of traffic) {
+    const d = (car.pos - pSeg + TOTAL_SEGS) % TOTAL_SEGS;
+    if (d < TOTAL_SEGS / 2) pos++;
+  }
+  ctx.fillStyle = pos === 1 ? '#ffdd00' : '#fff';
+  ctx.fillText(pos, 455, H - 7);
+
+  // RPM bar
+  const rpm = Math.min(state.speed / ((GEAR_TOPS[state.gear] * MAX_SPEED) + 0.1), 1);
+  ctx.font = 'bold 9px monospace'; ctx.fillStyle = '#ffdd00';
+  ctx.fillText('RPM', 512, H - 29);
+  ctx.strokeStyle = '#333';
+  ctx.strokeRect(510, H - 22, 120, 10);
+  ctx.fillStyle = rpm > 0.85 ? '#ff2200' : rpm > 0.65 ? '#ffaa00' : '#00aa44';
+  ctx.fillRect(511, H - 21, 118 * rpm, 8);
+}
+
+// ── Full frame render ─────────────────────────────────────────────────────────
+function renderFrame() {
+  renderRoad();
+
+  const pSeg = Math.floor(state.pos) % TOTAL_SEGS;
+
+  // Collect sprites (trees + traffic), back to front
+  const sprites = [];
+
+  for (let sa = DRAW_SEGS - 1; sa >= 1; sa--) {
+    const seg = segAt(pSeg + sa);
+    const z   = sa + 1;
+    const sy  = HZ + ROAD_SPAN / z;
+    if (sy >= RB || sy <= HZ) continue;
+    const yi  = Math.round(sy);
+    const sc  = 1 / z;
+    const hw  = lineHW[yi];
+    const rcx = lineCX[yi];
+
+    for (const tree of seg.trees) {
+      const tx = rcx + tree.side * (hw * 1.28 + 30 * sc);
+      sprites.push({ type: 'tree', x: tx, y: sy, sc, sa });
+    }
+  }
+
+  for (const car of traffic) {
+    const sa = Math.round(((car.pos - state.pos % TOTAL_SEGS) + TOTAL_SEGS) % TOTAL_SEGS);
+    if (sa < 1 || sa >= DRAW_SEGS) continue;
+    const z  = sa + 1;
+    const sy = HZ + ROAD_SPAN / z;
+    if (sy >= RB || sy <= HZ) continue;
+    const yi = Math.round(sy);
+    sprites.push({ type: 'car', x: lineCX[yi] + car.lane * lineHW[yi], y: sy, sc: 1/z, col: car.col, sa });
+  }
+
+  sprites.sort((a, b) => b.sa - a.sa);
+  for (const s of sprites) {
+    if (s.type === 'tree') drawTree(s.x, s.y, s.sc);
+    else drawTrafficCar(s.x, s.y, s.sc, s.col);
+  }
+
+  drawPlayerCar();
+  drawHUD();
+
+  // Warnings
+  if (Math.abs(state.px) > 1) {
+    ctx.fillStyle = 'rgba(100,50,0,0.22)';
+    ctx.fillRect(0, HZ, W, RB - HZ);
+    ctx.font = 'bold 13px monospace'; ctx.fillStyle = '#ff8800';
+    ctx.fillText('OFF ROAD', W / 2 - 38, HZ + 18);
+  }
+  if (state.fuel < 15 && Math.floor(Date.now() / 420) % 2) {
+    ctx.font = 'bold 14px monospace'; ctx.fillStyle = '#ff2200';
+    ctx.fillText('LOW FUEL!', W / 2 - 42, HZ + 36);
+  }
+  if (paused) {
+    ctx.fillStyle = 'rgba(0,0,0,0.62)';
+    ctx.fillRect(0, 0, W, H);
+    ctx.font = 'bold 26px monospace'; ctx.fillStyle = '#ffdd00';
+    ctx.textAlign = 'center';
+    ctx.fillText('PAUSED', W / 2, H / 2 - 8);
+    ctx.font = '12px monospace'; ctx.fillStyle = '#aaa';
+    ctx.fillText('ESC to resume', W / 2, H / 2 + 18);
+    ctx.textAlign = 'left';
+  }
+}
+
+// ── Audio (Web Audio synth) ───────────────────────────────────────────────────
+let aCtx = null;
+
+function startAudio() {
+  aCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+  const master = aCtx.createGain();
+  master.gain.value = 0.38;
+  master.connect(aCtx.destination);
+
+  // Simple reverb
+  const revBuf = aCtx.createBuffer(2, aCtx.sampleRate * 0.35, aCtx.sampleRate);
+  for (let c = 0; c < 2; c++) {
+    const d = revBuf.getChannelData(c);
+    for (let i = 0; i < d.length; i++)
+      d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 3.5);
+  }
+  const rev = aCtx.createConvolver();
+  rev.buffer = revBuf;
+  const revG = aCtx.createGain(); revG.gain.value = 0.1;
+  rev.connect(revG); revG.connect(master);
+
+  function osc(freq, type, vol, t, dur) {
+    const o = aCtx.createOscillator();
+    const g = aCtx.createGain();
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(vol, t + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + dur * 0.88);
+    o.connect(g); g.connect(master);
+    o.connect(g); g.connect(rev);
+    o.start(t); o.stop(t + dur);
+  }
+
+  function kick(t) {
+    const o = aCtx.createOscillator(), g = aCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(130, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.09);
+    g.gain.setValueAtTime(0.5, t);
+    g.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+    o.connect(g); g.connect(master);
+    o.start(t); o.stop(t + 0.2);
+  }
+
+  function hat(t) {
+    const buf = aCtx.createBuffer(1, Math.ceil(aCtx.sampleRate * 0.045), aCtx.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / d.length, 2.2);
+    const s = aCtx.createBufferSource(), g = aCtx.createGain();
+    s.buffer = buf; g.gain.value = 0.07;
+    s.connect(g); g.connect(master);
+    s.start(t);
+  }
+
+  // Track: A-minor driving synth (Lotus 2-ish flavour)
+  //  Bass:  Am  F   C   G   (root notes, 2 beats each)
+  //  Lead:  arpeggio over chord
+  const BPM  = 140;
+  const beat = 60 / BPM;
+  const bar  = beat * 4;
+
+  // A2=110, F2=87.31, C3=130.81, G2=98, E2=82.41, D2=73.42
+  const bassSeq = [[110,2],[87.31,2],[130.81,2],[98,2]]; // each [freq, beats]
+  // Lead notes (16th notes over 4 beats)
+  const leadSeq = [220,261.63,329.63,392, 440,392,329.63,261.63,
+                   220,293.66,349.23,440, 523.25,440,349.23,293.66];
+
+  let nextBar = aCtx.currentTime + 0.05;
+
+  function schedBar(t) {
+    // Bass
+    let bt = t;
+    for (const [f, beats] of bassSeq) {
+      osc(f, 'sawtooth', 0.28, bt, beat * beats * 0.82);
+      bt += beat * beats;
+    }
+    // Lead (starts after 1 beat)
+    const lt0 = t + beat;
+    for (let i = 0; i < leadSeq.length; i++)
+      osc(leadSeq[i], 'square', 0.055, lt0 + i * beat * 0.25, beat * 0.22);
+    // Rhythm
+    for (let i = 0; i < 4; i++) {
+      kick(t + i * beat);
+      hat(t + i * beat + beat * 0.5);
+      hat(t + i * beat + beat * 0.25);
+      hat(t + i * beat + beat * 0.75);
+    }
+  }
+
+  function tick() {
+    if (!running) return;
+    while (nextBar < aCtx.currentTime + 0.6) { schedBar(nextBar); nextBar += bar; }
+    setTimeout(tick, 220);
+  }
+  tick();
+}
+
+// ── Game loop ─────────────────────────────────────────────────────────────────
+function loop(ts) {
+  if (!running) return;
+  const dt = Math.min((ts - lastT) / 1000, 0.05);
+  lastT = ts;
+  update(dt);
+  renderFrame();
+  requestAnimationFrame(loop);
+}
+
+document.getElementById('go').addEventListener('click', () => {
+  document.getElementById('ui').style.display = 'none';
+  buildTrack();
+  initTraffic();
+  initState();
+  running = true;
+  startAudio();
+  lastT = performance.now();
+  requestAnimationFrame(loop);
+});
+</script>
+</body>
+</html>
